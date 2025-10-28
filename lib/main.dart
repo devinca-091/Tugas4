@@ -46,10 +46,11 @@ class _BeritaScreenState extends State<BeritaScreen> {
   bool _showScrollToTopButton = false;
   bool _isRefreshing = false;
   
-  // Variables untuk pull-to-refresh di web
+  // Variables untuk pull-to-refresh di web menggunakan scroll wheel
   double _pullDistance = 0;
   bool _isPulling = false;
-  final double _refreshTriggerDistance = 100;
+  final double _refreshTriggerDistance = 150;
+  bool _canTriggerRefresh = true;
 
   @override
   void initState() {
@@ -86,6 +87,7 @@ class _BeritaScreenState extends State<BeritaScreen> {
     
     setState(() {
       _isRefreshing = true;
+      _canTriggerRefresh = false;
     });
     
     try {
@@ -100,6 +102,15 @@ class _BeritaScreenState extends State<BeritaScreen> {
           _pullDistance = 0;
           _isPulling = false;
         });
+        
+        // Delay sebelum bisa refresh lagi
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            setState(() {
+              _canTriggerRefresh = true;
+            });
+          }
+        });
       }
     }
   }
@@ -113,31 +124,37 @@ class _BeritaScreenState extends State<BeritaScreen> {
     );
   }
 
-  // Handle pointer move untuk pull-to-refresh
-  void _onPointerMove(PointerMoveEvent event) {
-    // Hanya aktif jika sudah di posisi paling atas
-    if (_scrollController.hasClients && _scrollController.offset <= 0) {
-      if (event.delta.dy > 0 && !_isRefreshing) {
+  // Handle scroll wheel untuk pull-to-refresh
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      // Hanya aktif jika sudah di posisi paling atas dan scroll ke atas (negative scrollDelta)
+      if (_scrollController.hasClients && 
+          _scrollController.offset <= 0 && 
+          event.scrollDelta.dy < 0 &&
+          !_isRefreshing &&
+          _canTriggerRefresh) {
+        
         setState(() {
           _isPulling = true;
-          _pullDistance += event.delta.dy;
+          // Scroll ke atas (negative) menambah pull distance
+          _pullDistance += event.scrollDelta.dy.abs();
+          
           if (_pullDistance > _refreshTriggerDistance * 1.5) {
             _pullDistance = _refreshTriggerDistance * 1.5;
           }
         });
-      }
-    }
-  }
 
-  // Handle pointer up untuk trigger refresh
-  void _onPointerUp(PointerUpEvent event) {
-    if (_isPulling && _pullDistance >= _refreshTriggerDistance) {
-      _refreshArticles();
-    } else {
-      setState(() {
-        _pullDistance = 0;
-        _isPulling = false;
-      });
+        // Auto trigger refresh saat mencapai threshold
+        if (_pullDistance >= _refreshTriggerDistance) {
+          _refreshArticles();
+        }
+      } else if (_isPulling && event.scrollDelta.dy > 0) {
+        // Reset jika scroll ke bawah
+        setState(() {
+          _pullDistance = 0;
+          _isPulling = false;
+        });
+      }
     }
   }
 
@@ -165,8 +182,7 @@ class _BeritaScreenState extends State<BeritaScreen> {
         ],
       ),
       body: Listener(
-        onPointerMove: _onPointerMove,
-        onPointerUp: _onPointerUp,
+        onPointerSignal: _onPointerSignal,
         child: Stack(
           children: [
             FutureBuilder<List<Article>>(
@@ -243,22 +259,52 @@ class _BeritaScreenState extends State<BeritaScreen> {
                 left: 0,
                 right: 0,
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
+                  duration: const Duration(milliseconds: 150),
                   height: _isPulling 
-                      ? (_pullDistance / _refreshTriggerDistance * 60).clamp(0, 60)
-                      : (_isRefreshing ? 60 : 0),
+                      ? (_pullDistance / _refreshTriggerDistance * 80).clamp(0, 80)
+                      : (_isRefreshing ? 80 : 0),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
                   child: Center(
-                    child: _isRefreshing
-                        ? const CircularProgressIndicator()
-                        : Transform.rotate(
-                            angle: (_pullDistance / _refreshTriggerDistance * 3.14).clamp(0, 3.14),
-                            child: Icon(
-                              Icons.arrow_downward,
-                              color: _pullDistance >= _refreshTriggerDistance
-                                  ? Colors.blue
-                                  : Colors.grey,
-                            ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _isRefreshing
+                            ? const CircularProgressIndicator()
+                            : Transform.rotate(
+                                angle: (_pullDistance / _refreshTriggerDistance * 3.14).clamp(0, 3.14),
+                                child: Icon(
+                                  Icons.refresh,
+                                  size: 32,
+                                  color: _pullDistance >= _refreshTriggerDistance
+                                      ? Colors.blue
+                                      : Colors.grey,
+                                ),
+                              ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _isRefreshing 
+                              ? 'Memuat...' 
+                              : _pullDistance >= _refreshTriggerDistance
+                                  ? 'Lepas untuk refresh'
+                                  : 'Scroll ke atas untuk refresh',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _pullDistance >= _refreshTriggerDistance
+                                ? Colors.blue
+                                : Colors.grey,
                           ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
